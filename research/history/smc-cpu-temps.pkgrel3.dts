@@ -1,0 +1,38 @@
+// Device tree overlay: CPU and GPU temperature sensors from the SMC on the
+// 13-inch MacBook Pro M1 (j293). Asahi's stock device tree lists only four
+// board temperatures, and macsmc_hwmon exposes only the keys listed under the
+// SMC's hwmon node.
+//
+// pkgrel 1 listed the exelban/stats M1 keys. This SMC has none of them
+// (smc-cpu-temps.dts.pkgrel1).
+//
+// pkgrel 2 set apple,discover-temperatures alone (smc-cpu-temps.dts.pkgrel2).
+// The probe then failed with "Temperature discovery failed" (-EINVAL) and no
+// SMC hwmon appeared: the driver only discovers when the device tree adds no
+// temperature sensor, and the stock tree has four (TB0T TCHP TH0x TW0P).
+//
+// An overlay cannot delete nodes, so pkgrel 3 points those four at the key
+// "xxxx", which this SMC lacks. A temperature node whose key the SMC lacks is
+// skipped and not counted, because the hwmon node has no
+// #thermal-sensor-cells. Discovery then lists every readable SMC temperature
+// key, those four included (labelled by raw key). Once a stress test shows
+// which keys are the CPU and GPU, they get pinned here with proper labels.
+//
+// The kernel's DTB has no __symbols__, so the targets are node paths.
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/soc/smc@23e400000/hwmon";
+		__overlay__ {
+			apple,discover-temperatures;
+
+			temperature-TB0T { apple,key-id = "xxxx"; };
+			temperature-TCHP { apple,key-id = "xxxx"; };
+			temperature-TH0x { apple,key-id = "xxxx"; };
+			temperature-TW0P { apple,key-id = "xxxx"; };
+		};
+	};
+};

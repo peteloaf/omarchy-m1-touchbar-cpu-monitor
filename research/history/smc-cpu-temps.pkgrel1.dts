@@ -1,0 +1,38 @@
+// Device tree overlay: CPU and GPU temperature sensors from the SMC on the
+// 13-inch MacBook Pro M1 (j293). Asahi's stock device tree lists only four
+// board temperatures; macsmc_hwmon exposes exactly the keys listed under the
+// SMC's hwmon node, and silently skips any key this SMC does not have.
+//
+// Keys from exelban/stats (Modules/Sensors/values.swift), M1 family:
+//   Tp09 Tp0T                          CPU efficiency cores
+//   Tp01 Tp05 Tp0D Tp0H Tp0L Tp0P Tp0X Tp0b   CPU performance cores
+//   Tg05 Tg0D Tg0L Tg0T                GPU
+// The list covers M1 Pro/Max too; the plain M1 has 4+4 cores, so some will be
+// missing. Labels keep the SMC key until the readings show what each one is.
+//
+// The kernel's DTB has no __symbols__, so the target is the node's path.
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/soc/smc@23e400000/hwmon";
+		__overlay__ {
+			temperature-Tp09 { apple,key-id = "Tp09"; label = "CPU E Tp09"; };
+			temperature-Tp0T { apple,key-id = "Tp0T"; label = "CPU E Tp0T"; };
+			temperature-Tp01 { apple,key-id = "Tp01"; label = "CPU P Tp01"; };
+			temperature-Tp05 { apple,key-id = "Tp05"; label = "CPU P Tp05"; };
+			temperature-Tp0D { apple,key-id = "Tp0D"; label = "CPU P Tp0D"; };
+			temperature-Tp0H { apple,key-id = "Tp0H"; label = "CPU P Tp0H"; };
+			temperature-Tp0L { apple,key-id = "Tp0L"; label = "CPU P Tp0L"; };
+			temperature-Tp0P { apple,key-id = "Tp0P"; label = "CPU P Tp0P"; };
+			temperature-Tp0X { apple,key-id = "Tp0X"; label = "CPU P Tp0X"; };
+			temperature-Tp0b { apple,key-id = "Tp0b"; label = "CPU P Tp0b"; };
+			temperature-Tg05 { apple,key-id = "Tg05"; label = "GPU Tg05"; };
+			temperature-Tg0D { apple,key-id = "Tg0D"; label = "GPU Tg0D"; };
+			temperature-Tg0L { apple,key-id = "Tg0L"; label = "GPU Tg0L"; };
+			temperature-Tg0T { apple,key-id = "Tg0T"; label = "GPU Tg0T"; };
+		};
+	};
+};

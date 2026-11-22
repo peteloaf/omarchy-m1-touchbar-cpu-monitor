@@ -1,0 +1,27 @@
+// Device tree overlay: CPU and GPU temperature sensors from the SMC on the
+// 13-inch MacBook Pro M1 (j293). Asahi's stock device tree lists only four
+// board temperatures, and macsmc_hwmon exposes only the keys listed under the
+// SMC's hwmon node.
+//
+// pkgrel 1 listed the exelban/stats M1 keys (Tp01..Tp0b, Tp09, Tp0T, Tg05..Tg0T).
+// This SMC has none of them: at probe, every one of them failed with "Failed to
+// retrieve key info". (The old list is kept in smc-cpu-temps.dts.pkgrel1.)
+//
+// The patched macsmc_hwmon in this kernel supports apple,discover-temperatures,
+// which lists the SMC's own temperature keys at probe. This overlay turns it on.
+// Once a stress test shows which keys are the CPU and GPU, they can be pinned
+// here with proper labels.
+//
+// The kernel's DTB has no __symbols__, so the target is the node's path.
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/soc/smc@23e400000/hwmon";
+		__overlay__ {
+			apple,discover-temperatures;
+		};
+	};
+};

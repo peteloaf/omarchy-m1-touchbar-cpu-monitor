@@ -62,6 +62,7 @@ research/
   analyze.py            ranks sensors by how they respond to each phase
   fan-stress.sh         maximum CPU + GPU load until the fan spins
   data/                 the logs from this machine (CSV)
+  history/              earlier overlay versions (pkgrel 1-3) and the first stress test
 ```
 
 ---
@@ -144,6 +145,11 @@ reboot
 4. **pkgrel 4** (current): stress tests mapped keys to cores (below). Discovery is
    off again, the stock four are back, and only the six chosen keys are added,
    with readable labels.
+
+The earlier overlays are in `research/history/` (`smc-cpu-temps.pkgrel1.dts` to
+`pkgrel3.dts`), together with `stress-log.v1.sh`, the first stress test, which had
+five phases and no per-core loads. The comment at the top of each overlay explains
+what it tried.
 
 To debug the driver, turn on its debug messages and re-probe it:
 
