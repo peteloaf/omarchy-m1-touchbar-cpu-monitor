@@ -1,0 +1,286 @@
+#!/bin/bash
+# Feeds the barux Touch Bar "monitor" layer: CPU, GPU, fan, RAM, disk and
+# network, as `text` items with the keys mon_cpu, mon_gpu, mon_fan, mon_ram,
+# mon_disk and mon_net.
+#
+# Reads the sensors ONLY while the monitor layer is on the bar (and, every
+# CHART_INTERVAL seconds while the main layer shows, the CPU temperature for the
+# main layer's chart button). barux announces
+# the layer on screen over its socket ({"type":"layer","id":"monitor"}) when this
+# script connects and whenever it changes (null while the bar is off). Until it
+# says "monitor", this script just waits on the socket: no sensor reads, no timer.
+# While it does, it samples once a second, using shell builtins only (no
+# processes spawned per sample) except `df` for the disk, every DISK_EVERY samples.
+#
+# The CPU temperature is the SMC's "CPU Package" (key TCMb), which the
+# smc-cpu-temps device tree overlay (smc-cpu-temps/ in this repo) adds; stock
+# Asahi exposes no CPU temperature on the M1. The GPU's comes from the Asahi GPU driver's agx_stats: temperature_raw is the
+# sum of temperature_scale readings, each in 1/64 °C (inferred from the values,
+# which then agree with the SSD and Wi-Fi sensors next to it).
+
+SOCK=/run/barux.sock
+LAYER=monitor
+INTERVAL=1
+# The main layer's chart button (key mon_chart) shows the CPU Package
+# temperature, refreshed every CHART_INTERVAL seconds while main is on screen,
+# with a warning background (rounded °C): under WARM_C as configured, WARM_C to
+# HOT_C - 1 orange, HOT_C and up red.
+MAIN_LAYER=main
+CHART_INTERVAL=2
+WARM_C=65
+HOT_C=91
+WARM_BG="#e8833a"
+HOT_BG="#d9443b"
+DISK_MOUNT=/       # the main OS partition (/dev/mapper/root, ~234 GB btrfs)
+DISK_EVERY=30      # samples between `df` runs: disk use barely moves
+
+# ---- sensor paths, looked up each time the layer opens (hwmon numbers can change) ----
+find_paths() {
+    SMC='' GPU=''
+    local h name
+    for h in /sys/class/hwmon/hwmon*; do
+        read -r name < "$h/name" 2>/dev/null || continue
+        [ "$name" = macsmc_hwmon ] && SMC=$h
+    done
+    [ -r /sys/class/drm/renderD128/device/agx_stats ] && GPU=/sys/class/drm/renderD128/device/agx_stats
+    # SMC channels by label, so a driver update reordering them doesn't matter.
+    SMC_CPU='' SMC_FAN='' FAN_MAX=0
+    local f label
+    if [ -n "$SMC" ]; then
+        for f in "$SMC"/*_label; do
+            read -r label < "$f" 2>/dev/null || continue
+            case $label in
+                "CPU Package") SMC_CPU=${f%_label}_input ;;
+                Fan) SMC_FAN=${f%_label}_input
+                    read -r FAN_MAX < "${f%_label}_max" 2>/dev/null ;;
+            esac
+        done
+    fi
+    NETS=()
+    local n
+    for n in /sys/class/net/*; do
+        [ "${n##*/}" = lo ] || NETS+=("$n")
+    done
+}
+
+# ---- formatting (integers only: tenths by hand) ----
+tenths() { # value scaled by 10 -> "12.3"
+    printf '%d.%d' $(($1 / 10)) $(($1 % 10))
+}
+rate() { # bytes/s -> bits/s, decimal like link speeds: "850 b/s" / "12 Kb/s" /
+    # "1.2 Mb/s" / "450 Mb/s" / "1.2 Gb/s": at most 3 digits, so the cell's fixed
+    # width (barux config) always fits.
+    local b=$(($1 * 8)) unit=b div=1
+    if ((b >= 999500000)); then unit=Gb div=1000000000
+    elif ((b >= 999500)); then unit=Mb div=1000000
+    elif ((b >= 1000)); then unit=Kb div=1000
+    fi
+    local t=$(((b * 10 + div / 2) / div)) # tenths of the unit
+    if ((div == 1 || t >= 1000)); then
+        printf '%d %s/s' $(((b + div / 2) / div)) "$unit"
+    else
+        printf '%s %s/s' "$(tenths $t)" "$unit"
+    fi
+}
+milli_c() { # file in m°C -> "41°"
+    local v
+    read -r v < "$1" 2>/dev/null && printf '%d°' $(((v + 500) / 1000)) || printf '–'
+}
+
+# ---- one sample; the previous one is kept in globals for the rates ----
+sample() {
+    local now_us=${EPOCHREALTIME/./}
+    local dt_us=$((now_us - PREV_US))
+    ((dt_us > 0)) || dt_us=1
+
+    # CPU: /proc/stat's total line, busy = all but idle and iowait.
+    local _ user nice sys idle iow irq sirq steal
+    read -r _ user nice sys idle iow irq sirq steal _ < /proc/stat
+    local total=$((user + nice + sys + idle + iow + irq + sirq + steal))
+    local idle_all=$((idle + iow))
+    local dtot=$((total - PREV_TOTAL)) didle=$((idle_all - PREV_IDLE))
+    local cpu=0
+    ((dtot > 0)) && cpu=$(((100 * (dtot - didle) + dtot / 2) / dtot))
+    PREV_TOTAL=$total PREV_IDLE=$idle_all
+    # "\t" (sent as JSON's tab escape): barux puts the usage on the left of the
+    # cell and the temperature right-aligned.
+    CPU_TXT="${cpu}%\t$( [ -n "$SMC_CPU" ] && milli_c "$SMC_CPU" || printf '–')"
+
+    # GPU: busy time since the last sample, temperature.
+    if [ -n "$GPU" ]; then
+        local key val busy=0 traw=0 tscale=0
+        while read -r key val; do
+            case $key in
+                busy_ns) busy=$val ;;
+                temperature_raw) traw=$val ;;
+                temperature_scale) tscale=$val ;;
+            esac
+        done < "$GPU"
+        local gpu=0
+        ((PREV_BUSY > 0 && busy >= PREV_BUSY)) && gpu=$(((busy - PREV_BUSY) / (dt_us * 10)))
+        ((gpu > 100)) && gpu=100
+        PREV_BUSY=$busy
+        # temperature_raw sums `temperature_scale` readings of 1/64 °C each.
+        local gtemp='–'
+        ((tscale > 0)) && gtemp="$(((traw + tscale * 32) / (tscale * 64)))°"
+        GPU_TXT="${gpu}%\t${gtemp}"
+    else
+        GPU_TXT="–"
+    fi
+
+    # Fan: speed as a share of its maximum (SMC fan1_max, 7199 RPM); 0 when off.
+    local rpm
+    if [ -n "$SMC_FAN" ] && ((FAN_MAX > 0)) && read -r rpm < "$SMC_FAN" 2>/dev/null; then
+        FAN_TXT="$(((rpm * 100 + FAN_MAX / 2) / FAN_MAX))%"
+    else
+        FAN_TXT="–"
+    fi
+
+    # RAM: total minus available, like btop and free's "used".
+    local mkey mval mtot=0 mavail=0
+    while read -r mkey mval _; do
+        case $mkey in
+            MemTotal:) mtot=$mval ;;
+            MemAvailable:) mavail=$mval; break ;;
+        esac
+    done < /proc/meminfo
+    local used=$((mtot - mavail))
+    RAM_TXT="$(tenths $(((used * 10 + 524288) / 1048576)))/$(tenths $(((mtot * 10 + 524288) / 1048576))) GB"
+
+    # Disk: space used on the main partition (GiB, like RAM and df -h), refreshed
+    # every DISK_EVERY samples.
+    if ((DISK_LEFT <= 0)); then
+        local out pct used size
+        out=$(df -BG --output=pcent,used,size "$DISK_MOUNT" 2>/dev/null) # "Use% Used Size\n  5%  10G  234G"
+        read -r pct used size <<< "${out##*$'\n'}"
+        pct=${pct//[!0-9]/} used=${used//[!0-9]/} size=${size//[!0-9]/}
+        DISK_TXT="${pct}% · ${used}/${size} GB"
+        [ -n "$pct" ] && [ -n "$size" ] || DISK_TXT="–"
+        DISK_LEFT=$DISK_EVERY
+    fi
+    ((DISK_LEFT--))
+
+    # Network: every interface but lo, bytes per second since the last sample.
+    local rx=0 tx=0 n v
+    for n in "${NETS[@]}"; do
+        read -r v < "$n/statistics/rx_bytes" 2>/dev/null && rx=$((rx + v))
+        read -r v < "$n/statistics/tx_bytes" 2>/dev/null && tx=$((tx + v))
+    done
+    local drx=0 dtx=0
+    if ((PREV_RX > 0)); then
+        drx=$(((rx - PREV_RX) * 1000000 / dt_us))
+        dtx=$(((tx - PREV_TX) * 1000000 / dt_us))
+        ((drx < 0)) && drx=0
+        ((dtx < 0)) && dtx=0
+    fi
+    PREV_RX=$rx PREV_TX=$tx
+    NET_TXT="🡳 $(rate $drx)  🡱 $(rate $dtx)"  # wide-headed bold arrows (U+1F873/1F871): Noto Sans Symbols 2, via barux font fallback
+
+    PREV_US=$now_us
+}
+
+send() { # key value: one `set` line (values hold no quotes; the only backslash
+    # is the tab escape "\t", passed through as JSON)
+    printf '{"type":"set","key":"%s","value":"%s"}\n' "$1" "$2" >&"${BAR[1]}"
+}
+
+# The chart button: one file read, no processes. Sends only what changed.
+chart() {
+    local v t='–' bg=''
+    if [ -n "$SMC_CPU" ] && read -r v < "$SMC_CPU" 2>/dev/null; then
+        v=$(((v + 500) / 1000))
+        t="${v}°"
+        if ((v >= HOT_C)); then bg=$HOT_BG; elif ((v >= WARM_C)); then bg=$WARM_BG; fi
+    fi
+    [ "$t|$bg" = "$CHART_LAST" ] && return
+    CHART_LAST="$t|$bg"
+    printf '{"type":"set","key":"mon_chart","value":"%s","background":"%s"}\n' "$t" "$bg" >&"${BAR[1]}"
+}
+
+send_all() {
+    send mon_cpu "$CPU_TXT"
+    send mon_gpu "$GPU_TXT"
+    send mon_fan "$FAN_TXT"
+    send mon_ram "$RAM_TXT"
+    send mon_disk "$DISK_TXT"
+    send mon_net "$NET_TXT"
+}
+
+placeholders() {
+    CPU_TXT="…" GPU_TXT="…" FAN_TXT="…" RAM_TXT="…" DISK_TXT="…" NET_TXT="…"
+}
+
+# The layer named in a `layer` line (empty for null or anything else).
+layer_of() { # barux's field order isn't fixed ({"id":"monitor","type":"layer"})
+    local re='"id":"([^"]*)"'
+    [[ $1 == *'"type":"layer"'* && $1 =~ $re ]] && printf '%s' "${BASH_REMATCH[1]}"
+}
+
+if [ "$1" = "--print" ]; then # one reading over a second, to the terminal
+    find_paths
+    PREV_US=${EPOCHREALTIME/./} PREV_TOTAL=0 PREV_IDLE=0 PREV_BUSY=0 PREV_RX=0 PREV_TX=0 DISK_LEFT=0
+    sample
+    sleep "$INTERVAL"
+    sample
+    printf '%b\n' "$CPU_TXT" "$GPU_TXT" "$FAN_TXT" "$RAM_TXT" "$DISK_TXT" "$NET_TXT"
+    exit
+fi
+
+while true; do
+    if [ ! -S "$SOCK" ]; then
+        sleep 5
+        continue
+    fi
+    coproc BAR { exec socat - "UNIX-CONNECT:$SOCK" 2>/dev/null; }
+    shown='' CHART_LAST='' # the layer on screen; what the chart button last got
+    while true; do
+        case $shown in
+            "$LAYER") wait_s=$INTERVAL ;;
+            "$MAIN_LAYER") wait_s=$CHART_INTERVAL ;;
+            *) wait_s='' ;; # off, Fn, ...: block on the socket, no sensor reads
+        esac
+        if [ -n "$wait_s" ]; then
+            if read -r -t "$wait_s" -u "${BAR[0]}" line; then
+                :
+            elif (($? > 128)); then
+                if [ "$shown" = "$LAYER" ]; then
+                    sample
+                    send_all
+                else
+                    chart
+                fi
+                continue
+            else
+                break # socket closed (barux restarted)
+            fi
+        else
+            read -r -u "${BAR[0]}" line || break
+        fi
+        [[ $line == *'"type":"layer"'* ]] || continue
+        new=$(layer_of "$line")
+        [ "$new" = "$shown" ] && continue
+        if [ "$shown" = "$LAYER" ]; then
+            # Leave dashes behind, so the next open never flashes old numbers.
+            placeholders
+            send_all
+        fi
+        shown=$new
+        case $shown in
+            "$LAYER")
+                find_paths
+                PREV_US=${EPOCHREALTIME/./} PREV_TOTAL=0 PREV_IDLE=0 PREV_BUSY=0 PREV_RX=0 PREV_TX=0 DISK_LEFT=0
+                sample # baseline for the rates
+                placeholders
+                DISK_LEFT=0 # read the disk again on the first real sample
+                send_all
+                ;;
+            "$MAIN_LAYER")
+                find_paths
+                chart
+                ;;
+        esac
+    done
+    kill "$BAR_PID" 2>/dev/null
+    wait "$BAR_PID" 2>/dev/null
+    sleep 2
+done

@@ -1,0 +1,37 @@
+// Device tree overlay: CPU temperature sensors from the SMC on the 13-inch
+// MacBook Pro M1 (j293). Asahi's stock device tree lists only four board
+// temperatures (TB0T TCHP TH0x TW0P), and macsmc_hwmon exposes only the keys
+// listed under the SMC's hwmon node.
+//
+// History: pkgrel 1 listed the exelban/stats M1 keys, which this SMC lacks.
+// pkgrel 2 turned on apple,discover-temperatures, which fails while the tree
+// lists any temperature. pkgrel 3 pointed the stock four at a missing key and
+// discovered all 142 temperature keys.
+//
+// pkgrel 4 pins the keys a stress test identified (research/data/after-overlay.csv, research/analyze.py)
+// and leaves discovery and the stock four as shipped. Loading one P core
+// at a time raised Tp2 most for cpu4, Tp3 for cpu5, Tp7 for cpu6 and Tp8 for cpu7.
+// No key tracks the E cores alone: Te3 rose most under E-only load. TCMb tracks the
+// hottest P-core key and reads the same as TVD0. Each key has a/b/x/z
+// variants with the same response at fixed offsets (b = a + ~9 °C); the "b"
+// variant is used throughout. The SMC has no live GPU key, so the GPU reading
+// stays with the GPU driver's agx_stats.
+//
+// The kernel's DTB has no __symbols__, so the target is a node path.
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/soc/smc@23e400000/hwmon";
+		__overlay__ {
+			temperature-TCMb { apple,key-id = "TCMb"; label = "CPU Package"; };
+			temperature-Tp2b { apple,key-id = "Tp2b"; label = "CPU P-core 4"; };
+			temperature-Tp3b { apple,key-id = "Tp3b"; label = "CPU P-core 5"; };
+			temperature-Tp7b { apple,key-id = "Tp7b"; label = "CPU P-core 6"; };
+			temperature-Tp8b { apple,key-id = "Tp8b"; label = "CPU P-core 7"; };
+			temperature-Te3b { apple,key-id = "Te3b"; label = "CPU E-cluster"; };
+		};
+	};
+};

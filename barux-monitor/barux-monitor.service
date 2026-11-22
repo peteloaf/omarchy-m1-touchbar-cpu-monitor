@@ -1,0 +1,12 @@
+[Unit]
+Description=Feed the barux Touch Bar resource monitor (reads sensors only while it shows)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/barux-monitor
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

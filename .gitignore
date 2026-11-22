@@ -1,0 +1,6 @@
+# makepkg output
+smc-cpu-temps/src/
+smc-cpu-temps/pkg/
+smc-cpu-temps/*.dtbo
+smc-cpu-temps/*.pkg.tar.*
+smc-cpu-temps/test.dtb

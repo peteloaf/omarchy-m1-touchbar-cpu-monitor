@@ -1,0 +1,148 @@
+# barux config pieces for the Touch Bar CPU monitor. Paste them into
+# /etc/barux/config.toml, then: sudo systemctl reload barux
+#
+# Needs barux from https://github.com/peteloaf/barux, branch new-features (the
+# `layer` action, `align`, tab-split values, "background" from the socket,
+# battery level colors and the font fallback). Copy that repo's icons/ to
+# /etc/barux/icons/ (its install.sh does this): monitoring.svg, mon_*.svg and
+# battery_charging_bolt.svg.
+#
+# barux-monitor (user service) fills the text items below over /run/barux.sock.
+
+# ---------------------------------------------------------------------------
+# 1. Items for the END of your main layer ([[layers]] with id = "main").
+#    Main bar used here:
+#    [brightness] [kbd-] [kbd+] ····· [prev] [play] [next] [volume] [wifi] [battery] [cpu temp → monitor]
+# ---------------------------------------------------------------------------
+
+# Battery: the icon colored by charge (green from 50 %, yellow 20-49 %, red
+# under 20 %), the charging bolt yellow; the percentage stays white.
+[[layers.items]]
+type = "battery"
+show_percent = true
+level_colors = ["#34c759", "#ffcc00", "#ff3b30"]
+level_thresholds = [50, 20]
+bolt_color = "#ffd60a"
+
+# Room before the chart button.
+[[layers.items]]
+type = "spacer"
+width = 24
+
+# The chart button: the live CPU Package temperature, refreshed every 2 s by
+# barux-monitor, orange from 65 °C and red from 91 °C. 140 px fits "100°".
+# A tap opens the monitor layer.
+[[layers.items]]
+type = "text"
+id = "monitor"
+key = "mon_chart"
+icon = "/etc/barux/icons/monitoring.svg"
+width = 140
+action = { type = "layer", layer = "monitor" }
+
+# ---------------------------------------------------------------------------
+# 2. The monitor layer: add it as a new [[layers]] block.
+#    [◀ Back]  [CPU 12% 45°] [GPU 3% 41°] [fan 0%] [RAM 3.3/15.1 GB] [disk 5% · 10/234 GB] [net 🡳 1.2 Mb/s 🡱 80 Kb/s]
+#    Widths are measured for the widest realistic value ("100%" and "110°",
+#    "999 Mb/s" each way), so cells don't change size as digits come and go.
+# ---------------------------------------------------------------------------
+[[layers]]
+id = "monitor"
+margin = 0
+gap = 8
+item_radius = 10
+
+# The triangle is a character (Noto Sans Symbols 2, via barux's font
+# fallback). The trailing thin space ( ) balances the triangle's built-in
+# left spacing, so the label sits centered with 16 px of padding on each side.
+[[layers.items]]
+type = "button"
+id = "mon_back"
+label = "⯇ Back "
+width = 116
+action = { type = "layer", layer = "main" }
+
+[[layers.items]]
+type = "spacer"
+width = 24
+
+# CPU: usage on the left, temperature right-aligned (barux-monitor sends
+# "12%\t45°"; the tab splits the cell).
+[[layers.items]]
+type = "text"
+id = "mon_cpu"
+key = "mon_cpu"
+icon = "/etc/barux/icons/mon_cpu.svg"
+color = "#ffffff"
+background = "#e8833a"
+text_color = "#ffffff"
+width = 222
+align = "left"
+action = { type = "layer", layer = "main" }
+
+[[layers.items]]
+type = "text"
+id = "mon_gpu"
+key = "mon_gpu"
+icon = "/etc/barux/icons/mon_gpu.svg"
+color = "#ffffff"
+background = "#a374db"
+text_color = "#ffffff"
+width = 222
+align = "left"
+action = { type = "layer", layer = "main" }
+
+# Fan: speed as a percentage of its maximum (0 % while the SMC keeps it off).
+[[layers.items]]
+type = "text"
+id = "mon_fan"
+key = "mon_fan"
+icon = "/etc/barux/icons/mon_fan.svg"
+color = "#ffffff"
+background = "#2fb39f"
+text_color = "#ffffff"
+width = 152
+align = "left"
+action = { type = "layer", layer = "main" }
+
+[[layers.items]]
+type = "text"
+id = "mon_ram"
+key = "mon_ram"
+icon = "/etc/barux/icons/mon_ram.svg"
+color = "#1c1c1e"
+background = "#f2cc4b"
+text_color = "#1c1c1e"
+width = 239
+align = "left"
+action = { type = "layer", layer = "main" }
+
+# Disk: the root partition (DISK_MOUNT in barux-monitor).
+[[layers.items]]
+type = "text"
+id = "mon_disk"
+key = "mon_disk"
+icon = "/etc/barux/icons/mon_disk.svg"
+color = "#1c1c1e"
+background = "#dcdce0"
+text_color = "#1c1c1e"
+width = 297
+align = "left"
+action = { type = "layer", layer = "main" }
+
+# Network: all interfaces but lo, in bits per second.
+[[layers.items]]
+type = "text"
+id = "mon_net"
+key = "mon_net"
+icon = "/etc/barux/icons/mon_net.svg"
+color = "#ffffff"
+background = "#4f97e8"
+text_color = "#ffffff"
+width = 388
+align = "left"
+action = { type = "layer", layer = "main" }
+
+# Takes the rest of the row, so the cells stay at the left.
+[[layers.items]]
+type = "spacer"

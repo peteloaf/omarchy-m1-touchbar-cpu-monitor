@@ -1,0 +1,39 @@
+# Local package: SMC CPU temperature sensors for the MacBook Pro 13" M1 (j293).
+# Installs a device tree overlay that omarchy-mac-boot applies when update-m1n1
+# rebuilds m1n1 stage 2 (its pacman hook runs on install, upgrade and removal).
+# Remove with: sudo pacman -R smc-cpu-temps   (then reboot)
+pkgname=smc-cpu-temps
+pkgver=1
+pkgrel=4
+pkgdesc="SMC CPU temperature sensors (package, P cores, E cluster) for the M1 MacBook Pro 13 (j293) via a device tree overlay"
+arch=('aarch64')
+license=('MIT')
+depends=('omarchy-mac-boot' 'dtc')
+makedepends=('dtc')
+source=('smc-cpu-temps.dts')
+sha256sums=('SKIP')
+
+build() {
+  dtc -@ -I dts -O dtb -o smc-cpu-temps.dtbo "$srcdir/smc-cpu-temps.dts"
+}
+
+check() {
+  # The overlay must apply to this kernel's j293 device tree and give a valid one.
+  local dtb
+  dtb=$(/bin/ls -d /lib/modules/*-ARCH | sort -rV | head -1)/dtbs/t8103-j293.dtb
+  fdtoverlay -i "$dtb" -o test.dtb smc-cpu-temps.dtbo
+  dtc -q -I dtb -O dtb -o /dev/null test.dtb
+  local h=/soc/smc@23e400000/hwmon n
+  if fdtget test.dtb $h apple,discover-temperatures >/dev/null 2>&1; then return 1; fi
+  for n in TCMb Tp2b Tp3b Tp7b Tp8b Te3b; do
+    [ "$(fdtget -t s test.dtb $h/temperature-$n apple,key-id)" = $n ]
+  done
+  for n in TB0T TCHP TH0x TW0P; do
+    [ "$(fdtget -t s test.dtb $h/temperature-$n apple,key-id)" = $n ]
+  done
+}
+
+package() {
+  install -Dm644 smc-cpu-temps.dtbo \
+    "$pkgdir/usr/lib/omarchy-mac-boot/dtb-overlays/t8103-j293/50-smc-cpu-temps.dtbo"
+}
